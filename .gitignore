@@ -1,0 +1,15 @@
+# Binaries
+pokedexcli
+*.exe
+*.out
+
+# Test coverage
+*.test
+coverage.out
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
