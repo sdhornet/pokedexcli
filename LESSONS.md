@@ -136,16 +136,50 @@ for _, c := range cases {
 
 For larger suites, wrap each case in `t.Run(name, func(t *testing.T) { ... })` — gives each case its own subtest name in output and lets you target one with `go test -run TestCleanInput/case_name`.
 
-## Module path = import path
+## Splitting a small CLI into files
 
-`go.mod`:
+Three responsibilities, three places:
+
+1. **Entrypoint** — `main.go` is a one-liner that calls into the REPL. No logic.
+2. **REPL** — `repl.go` owns the loop, input parsing, dispatch, and the registry (`cliCommand` type + `getCommands()`).
+3. **Commands** — one file per command (`command_exit.go`, `command_help.go`, ...). Each defines its callback. Same package as the registry, so no imports needed between them.
+
 ```
-module github.com/sdhornet/pokedexcli
+pokedexcli/
+├── main.go            // calls startRepl()
+├── repl.go            // loop + cliCommand + getCommands()
+├── command_exit.go
+└── command_help.go
 ```
 
-That string is the import path other code would use. For a single-package CLI it doesn't matter much, but once you split into subpackages (`internal/pokeapi`, etc.) you'll import them as `github.com/sdhornet/pokedexcli/internal/pokeapi`.
+Adding a new command = a new file + one line in `getCommands()`. Scales without a junk-drawer `commands.go`.
 
-All `.go` files in the repo root share `package main`. Files in subdirectories are separate packages whose name matches the directory by convention.
+## Packages and the `internal/` directory
+
+**A package = a directory.** All `.go` files in the directory declare the same `package <name>` at the top. Sibling files in the same package see each other with no imports — that's why `repl.go` can call `commandExit` directly.
+
+**Exported = Capitalized.** Across package boundaries, only `Capitalized` identifiers are visible. `GetLocations` is exported; `getLocations` is package-private. Enforced by the compiler, not convention.
+
+**`internal/` is special.** Packages under `internal/` can only be imported by code in the same module. Toolchain-enforced. Use it for implementation-detail packages you don't want imported from outside the project.
+
+**Import path = module path + directory path.** Qualify calls with the package's declared name.
+
+```go
+// go.mod: module github.com/sdhornet/pokedexcli
+
+// internal/pokeapi/pokeapi.go
+package pokeapi
+func GetLocations() { ... }
+```
+
+```go
+// main.go
+import "github.com/sdhornet/pokedexcli/internal/pokeapi"
+
+pokeapi.GetLocations()
+```
+
+Directory name, `package` declaration, and the qualifier you call with are always the same string by convention. Lowercase, no underscores.
 
 ## `ABOUTME:` file headers (personal convention)
 
