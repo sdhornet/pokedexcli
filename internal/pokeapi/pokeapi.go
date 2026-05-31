@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+
+	"github.com/sdhornet/pokedexcli/internal/pokecache"
 )
 
 type LocationData struct {
@@ -17,28 +19,32 @@ type LocationData struct {
 	} `json:"results"`
 }
 
-func WalkMap(url string) (LocationData, error) {
-	locations, err := getLocations(url)
+func WalkMap(url string, cache *pokecache.Cache) (LocationData, error) {
+	locations, err := getLocations(url, cache)
 	if err != nil {
 		return LocationData{}, err
 	}
 	return locations, nil
 }
 
-func getLocations(url string) (LocationData, error) {
-	res, err := http.Get(url)
-	if err != nil {
-		return LocationData{}, fmt.Errorf("getting location data: %w", err)
-	}
-	defer res.Body.Close()
+func getLocations(url string, cache *pokecache.Cache) (LocationData, error) {
+	data, ok := cache.Get(url)
+	if !ok {
+		res, err := http.Get(url)
+		if err != nil {
+			return LocationData{}, fmt.Errorf("getting location data: %w", err)
+		}
+		defer res.Body.Close()
 
-	if res.StatusCode > 299 {
-		return LocationData{}, fmt.Errorf("unexpected status code: %d", res.StatusCode)
-	}
+		if res.StatusCode < 200 || res.StatusCode > 299 {
+			return LocationData{}, fmt.Errorf("unexpected status code: %d", res.StatusCode)
+		}
 
-	data, err := io.ReadAll(res.Body)
-	if err != nil {
-		return LocationData{}, fmt.Errorf("reading response body: %w", err)
+		data, err = io.ReadAll(res.Body)
+		if err != nil {
+			return LocationData{}, fmt.Errorf("reading response body: %w", err)
+		}
+		cache.Add(url, data)
 	}
 
 	var locations LocationData

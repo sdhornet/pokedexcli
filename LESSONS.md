@@ -91,6 +91,24 @@ if err := elem.callback(); err != nil {
 
 `%v` is the default formatter for any value, including errors. For wrapping, `fmt.Errorf("doing X: %w", err)` lets callers `errors.Is` / `errors.As` against the underlying error.
 
+Practical rule:
+- Use `return err` when the caller already has enough context.
+- Use `fmt.Errorf("doing thing: %w", err)` when adding context makes the failure easier to locate.
+- Use `fmt.Errorf("bad status code: %d", status)` for errors you create yourself with no underlying error to wrap.
+- Prefer lowercase error strings. The caller may print a prefix like `Error:`, so `fmt.Errorf("getting location data: %w", err)` reads better than `fmt.Errorf("Error getting location data: %w", err)`.
+
+```go
+res, err := http.Get(url)
+if err != nil {
+    return LocationData{}, fmt.Errorf("getting location data: %w", err)
+}
+defer res.Body.Close()
+
+if res.StatusCode < 200 || res.StatusCode > 299 {
+    return LocationData{}, fmt.Errorf("unexpected status code: %d", res.StatusCode)
+}
+```
+
 ## `os.Exit` skips deferred functions
 
 ```go
@@ -180,6 +198,302 @@ pokeapi.GetLocations()
 ```
 
 Directory name, `package` declaration, and the qualifier you call with are always the same string by convention. Lowercase, no underscores.
+
+## Shared REPL state with a config pointer
+
+The REPL needs memory between commands. For example, `map` gets a `next` URL from the API response, and `mapb` needs to remember the `previous` URL.
+
+Store that shared state in one config value created when the REPL starts:
+
+```go
+type config struct {
+    Next     string
+    Previous string
+}
+
+func startRepl() {
+    cfg := &config{Next: "https://pokeapi.co/api/v2/location-area/"}
+    // ...
+}
+```
+
+Then make every command callback accept the same pointer:
+
+```go
+type cliCommand struct {
+    name        string
+    description string
+    callback    func(*config) error
+}
+```
+
+Why a pointer? Without one, each command would receive a copy of the config. Updating the copy would not update the REPL's shared state. With `*config`, commands can update the original:
+
+```go
+cfg.Next = locations.Next
+cfg.Previous = locations.Previous
+```
+
+Because `cfg` is a pointer to a struct, Go automatically dereferences it for field access. This:
+
+```go
+cfg.Next = locations.Next
+```
+
+is shorthand for:
+
+```go
+(*cfg).Next = locations.Next
+```
+
+Same behavior applies when reading fields.
+
+## Pagination state belongs at the command/REPL layer
+
+PokeAPI pagination responses include `next` and `previous` URLs. The API package can return those values, but the REPL config owns the current navigation state.
+
+Flow:
+
+```text
+map command
+  -> use cfg.Next
+  -> fetch location data
+  -> print location names
+  -> update cfg.Next and cfg.Previous
+
+mapb command
+  -> if cfg.Previous is empty, tell the user they're on the first page
+  -> otherwise use cfg.Previous
+  -> fetch location data
+  -> print location names
+  -> update cfg.Next and cfg.Previous
+```
+
+Seeding the first URL in `startRepl` is cleaner than making `commandMap` guess whether an empty URL means "first run" or "no next page".
+
+## HTTP request and JSON decoding flow
+
+The PokeAPI package owns the network and JSON details. The command layer should not need to know how to make an HTTP request or decode a response body.
+
+Basic shape:
+
+```go
+res, err := http.Get(url)
+if err != nil {
+    return LocationData{}, fmt.Errorf("getting location data: %w", err)
+}
+defer res.Body.Close()
+
+if res.StatusCode < 200 || res.StatusCode > 299 {
+    return LocationData{}, fmt.Errorf("unexpected status code: %d", res.StatusCode)
+}
+
+data, err := io.ReadAll(res.Body)
+if err != nil {
+    return LocationData{}, fmt.Errorf("reading response body: %w", err)
+}
+
+var locations LocationData
+if err := json.Unmarshal(data, &locations); err != nil {
+    return LocationData{}, fmt.Errorf("decoding location data: %w", err)
+}
+```
+
+Key points:
+- `defer res.Body.Close()` should happen after confirming `http.Get` returned no error, before any early returns based on status code.
+- `res.Body` is a stream, not a string. To inspect the body text, read it with `io.ReadAll`.
+- Check status codes before assuming the body is valid JSON.
+- Use struct tags like `` `json:"next"` `` to map JSON fields onto Go struct fields.
+
+## Exported response types across package boundaries
+
+If the `main` package needs to use fields from a type returned by `pokeapi`, the type and fields need to be exported.
+
+```go
+type LocationData struct {
+    Count    int    `json:"count"`
+    Next     string `json:"next"`
+    Previous string `json:"previous"`
+    Results  []struct {
+        Name string `json:"name"`
+        URL  string `json:"url"`
+    } `json:"results"`
+}
+```
+
+`LocationData`, `Next`, `Previous`, and `Results` are capitalized, so code outside the `pokeapi` package can use them. A function can technically return an unexported type, but that is awkward for callers because they cannot name the type in their own signatures.
+
+## Caching raw API responses
+
+The cache package stores raw response bytes by URL:
+
+```text
+URL string -> []byte response body
+```
+
+It does not know anything about Pokemon, locations, JSON structs, or the CLI. That keeps `internal/pokecache` reusable. The PokeAPI package decides what the bytes mean by unmarshalling them into `LocationData`.
+
+```go
+type cacheEntry struct {
+    createdAt time.Time
+    val       []byte
+}
+
+type Cache struct {
+    entries map[string]cacheEntry
+    mu      sync.Mutex
+}
+```
+
+`NewCache` initializes the map and starts cleanup in the background:
+
+```go
+func NewCache(interval time.Duration) *Cache {
+    cache := &Cache{entries: make(map[string]cacheEntry)}
+    go cache.reapLoop(interval)
+    return cache
+}
+```
+
+The map must be made with `make`; writing to a nil map panics.
+
+## Pointer receivers and mutexes
+
+Cache methods use pointer receivers:
+
+```go
+func (c *Cache) Add(key string, val []byte) { ... }
+func (c *Cache) Get(key string) ([]byte, bool) { ... }
+```
+
+This matters because `Cache` contains a `sync.Mutex`. Copying structs that contain mutexes is a bad habit: different copies can appear to protect the same data but actually use different locks. Pointer receivers keep every method operating on the same cache and same mutex.
+
+The basic lock pattern:
+
+```go
+c.mu.Lock()
+defer c.mu.Unlock()
+```
+
+Use this around every map access: adding, getting, and deleting. Go maps are not safe for concurrent read/write access.
+
+## Adding and getting cache entries
+
+For `Add`, store a full `cacheEntry` in the map:
+
+```go
+c.entries[key] = cacheEntry{
+    createdAt: time.Now(),
+    val:       val,
+}
+```
+
+For `Get`, use the comma-ok idiom:
+
+```go
+entry, ok := c.entries[key]
+if !ok {
+    return nil, false
+}
+
+return entry.val, true
+```
+
+Returning `nil, false` is normal for a missing `[]byte`; `nil` is the zero value for slices.
+
+Map values are not directly addressable. If you need to modify part of a struct already stored in a map, pull the struct out, modify the copy, then store it back:
+
+```go
+entry := c.entries[key]
+entry.val = newVal
+c.entries[key] = entry
+```
+
+For `Add`, replacing the whole entry with a struct literal is simpler.
+
+## Background cleanup with tickers and goroutines
+
+`time.NewTicker(interval)` creates a value that sends a signal on `ticker.C` every interval.
+
+```go
+func (c *Cache) reapLoop(interval time.Duration) {
+    ticker := time.NewTicker(interval)
+    for range ticker.C {
+        c.mu.Lock()
+
+        for key, entry := range c.entries {
+            if time.Since(entry.createdAt) > interval {
+                delete(c.entries, key)
+            }
+        }
+
+        c.mu.Unlock()
+    }
+}
+```
+
+`go cache.reapLoop(interval)` starts that loop in the background. `NewCache` returns immediately while the cleanup loop keeps running.
+
+`delete(c.entries, key)` is the built-in way to remove a map entry.
+
+## Integrating cache into the request layer
+
+The REPL config owns one cache for the whole session:
+
+```go
+type config struct {
+    Next     string
+    Previous string
+    Cache    *pokecache.Cache
+}
+```
+
+Create it once:
+
+```go
+cfg := &config{
+    Next:  "https://pokeapi.co/api/v2/location-area/",
+    Cache: pokecache.NewCache(5 * time.Second),
+}
+```
+
+Commands pass `cfg.Cache` into the PokeAPI request layer. The request layer checks the cache before making an HTTP request:
+
+```text
+getLocations(url, cache)
+  -> cache.Get(url)
+     -> if hit: use cached bytes
+     -> if miss: http.Get(url), read body, cache.Add(url, bytes)
+  -> json.Unmarshal(bytes, &locations)
+```
+
+Cached bytes and fresh HTTP bytes both go through the same JSON decoding path.
+
+## Testing cache behavior with fake data
+
+Cache tests should use fake keys and byte slices, not real PokeAPI responses. The cache package's responsibility is only `string -> []byte` storage.
+
+```go
+cache := NewCache(5 * time.Second)
+cache.Add("https://example.com", []byte("testdata"))
+
+val, ok := cache.Get("https://example.com")
+```
+
+The add/get test proves values can be stored and retrieved.
+
+The reap-loop test uses a tiny interval and `time.Sleep`:
+
+```go
+cache := NewCache(5 * time.Millisecond)
+cache.Add("https://example.com", []byte("testdata"))
+
+time.Sleep(10 * time.Millisecond)
+
+_, ok := cache.Get("https://example.com")
+```
+
+This keeps the test fast while proving old entries are removed.
 
 ## `ABOUTME:` file headers (personal convention)
 

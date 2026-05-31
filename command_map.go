@@ -8,10 +8,10 @@ import (
 
 func commandMap(cfg *config) error {
 	if cfg.Next == "" {
-		fmt.Println("your on the last page")
+		fmt.Println("you're on the last page")
 		return nil
 	}
-	locations, err := pokeapi.WalkMap(cfg.Next)
+	locations, err := pokeapi.WalkMap(cfg.Next, cfg.Cache)
 	if err != nil {
 		return err
 	}

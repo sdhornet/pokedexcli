@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
+
+	"github.com/sdhornet/pokedexcli/internal/pokecache"
 )
 
 type cliCommand struct {
@@ -16,10 +19,15 @@ type cliCommand struct {
 type config struct {
 	Next     string
 	Previous string
+	Cache    *pokecache.Cache
 }
 
 func startRepl() {
-	cfg := &config{Next: "https://pokeapi.co/api/v2/location-area/"}
+	cfg := &config{
+		Next: "https://pokeapi.co/api/v2/location-area/",
+		Cache: pokecache.NewCache(5 * time.Second),
+	}
+
 	scanner := bufio.NewScanner(os.Stdin)
 	for {
 		fmt.Print("pokedex > ")

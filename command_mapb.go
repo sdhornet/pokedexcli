@@ -11,7 +11,7 @@ func commandMapb(cfg *config) error {
 		fmt.Println("you're on the first page")
 		return nil
 	}
-	locations, err := pokeapi.WalkMap(cfg.Previous)
+	locations, err := pokeapi.WalkMap(cfg.Previous, cfg.Cache)
 	if err != nil {
 		return err
 	}
