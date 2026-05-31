@@ -10,10 +10,16 @@ import (
 type cliCommand struct {
 	name        string
 	description string
-	callback    func() error
+	callback    func(*config) error
+}
+
+type config struct {
+	Next     string
+	Previous string
 }
 
 func startRepl() {
+	cfg := &config{Next: "https://pokeapi.co/api/v2/location-area/"}
 	scanner := bufio.NewScanner(os.Stdin)
 	for {
 		fmt.Print("pokedex > ")
@@ -33,7 +39,7 @@ func startRepl() {
 			continue
 		}
 
-		if err := command.callback(); err != nil {
+		if err := command.callback(cfg); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		}
 	}
