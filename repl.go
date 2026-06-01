@@ -13,7 +13,7 @@ import (
 type cliCommand struct {
 	name        string
 	description string
-	callback    func(*config) error
+	callback    func(*config, string) error
 }
 
 type config struct {
@@ -24,7 +24,7 @@ type config struct {
 
 func startRepl() {
 	cfg := &config{
-		Next: "https://pokeapi.co/api/v2/location-area/",
+		Next:  "https://pokeapi.co/api/v2/location-area/",
 		Cache: pokecache.NewCache(5 * time.Second),
 	}
 
@@ -41,13 +41,18 @@ func startRepl() {
 		}
 
 		commandName := words[0]
+		location := ""
+		if len(words) > 1 {
+			location = words[1]
+		}
+
 		command, ok := getCommands()[commandName]
 		if !ok {
 			fmt.Println("Unknown command")
 			continue
 		}
 
-		if err := command.callback(cfg); err != nil {
+		if err := command.callback(cfg, location); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		}
 	}
@@ -83,6 +88,11 @@ func getCommands() map[string]cliCommand {
 			name:        "mapb",
 			description: "Displays the previous 20 locations",
 			callback:    commandMapb,
+		},
+		"explore": {
+			name:        "explore <area_name>",
+			description: "Displays all Pokemon in the area",
+			callback:    explore,
 		},
 	}
 }

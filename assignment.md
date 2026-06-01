@@ -30,12 +30,3 @@ Found Pokemon:
  - gastrodon
 Pokedex >
 ```
-
-## TODO
-- Update the CLI to accept a second parameter
-  - Struct?
-- Update all the function signatures to accept parameters
-- Most will just not use it, but for explore, validate it is real?
-- Need a new struct of json data
-- Integrate it with the get request and cacheing
-  - Can probably reuse functions and pass the location to append to the url  

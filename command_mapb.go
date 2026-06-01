@@ -6,7 +6,7 @@ import (
 	"github.com/sdhornet/pokedexcli/internal/pokeapi"
 )
 
-func commandMapb(cfg *config) error {
+func commandMapb(cfg *config, location string) error {
 	if cfg.Previous == "" {
 		fmt.Println("you're on the first page")
 		return nil

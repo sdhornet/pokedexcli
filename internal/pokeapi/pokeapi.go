@@ -73,37 +73,54 @@ type LocationDetails struct {
 }
 
 func WalkMap(url string, cache *pokecache.Cache) (LocationData, error) {
-	locations, err := getLocations(url, cache)
+	var locations LocationData
+
+	dataBytes, err := getPokeData(url, cache)
 	if err != nil {
 		return LocationData{}, err
 	}
-	return locations, nil
-}
 
-func getLocations(url string, cache *pokecache.Cache) (LocationData, error) {
-	data, ok := cache.Get(url)
-	if !ok {
-		res, err := http.Get(url)
-		if err != nil {
-			return LocationData{}, fmt.Errorf("getting location data: %w", err)
-		}
-		defer res.Body.Close()
-
-		if res.StatusCode < 200 || res.StatusCode > 299 {
-			return LocationData{}, fmt.Errorf("unexpected status code: %d", res.StatusCode)
-		}
-
-		data, err = io.ReadAll(res.Body)
-		if err != nil {
-			return LocationData{}, fmt.Errorf("reading response body: %w", err)
-		}
-		cache.Add(url, data)
-	}
-
-	var locations LocationData
-	if err := json.Unmarshal(data, &locations); err != nil {
+	if err := json.Unmarshal(dataBytes, &locations); err != nil {
 		return LocationData{}, fmt.Errorf("decoding location data: %w", err)
 	}
 
 	return locations, nil
+}
+
+func ExploreLocation(url string, cache *pokecache.Cache) (LocationDetails, error) {
+	var locationDetail LocationDetails
+
+	dataBytes, err := getPokeData(url, cache)
+	if err != nil {
+		return LocationDetails{}, err
+	}
+
+	if err := json.Unmarshal(dataBytes, &locationDetail); err != nil {
+		return LocationDetails{}, fmt.Errorf("decoding location details: %w", err)
+	}
+
+	return locationDetail, nil
+}
+
+func getPokeData(url string, cache *pokecache.Cache) ([]byte, error) {
+	data, ok := cache.Get(url)
+	if !ok {
+		res, err := http.Get(url)
+		if err != nil {
+			return nil, fmt.Errorf("getting PokeAPI data: %w", err)
+		}
+		defer res.Body.Close()
+
+		if res.StatusCode < 200 || res.StatusCode > 299 {
+			return nil, fmt.Errorf("unexpected status code: %d", res.StatusCode)
+		}
+
+		data, err = io.ReadAll(res.Body)
+		if err != nil {
+			return nil, fmt.Errorf("reading response body: %w", err)
+		}
+		cache.Add(url, data)
+	}
+
+	return data, nil
 }

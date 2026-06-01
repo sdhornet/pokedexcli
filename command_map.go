@@ -6,7 +6,7 @@ import (
 	"github.com/sdhornet/pokedexcli/internal/pokeapi"
 )
 
-func commandMap(cfg *config) error {
+func commandMap(cfg *config, location string) error {
 	if cfg.Next == "" {
 		fmt.Println("you're on the last page")
 		return nil
