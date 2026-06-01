@@ -223,7 +223,7 @@ Then make every command callback accept the same pointer:
 type cliCommand struct {
     name        string
     description string
-    callback    func(*config) error
+    callback    func(*config, string) error
 }
 ```
 
@@ -247,6 +247,40 @@ is shorthand for:
 ```
 
 Same behavior applies when reading fields.
+
+## Keeping command callbacks uniform as commands gain arguments
+
+Once one command needs an argument, every callback in the dispatch table needs the same function signature. The dispatch layer should not need custom cases for `map`, `mapb`, and `explore`.
+
+```go
+type cliCommand struct {
+    name        string
+    description string
+    callback    func(*config, string) error
+}
+```
+
+The REPL parses the first word as the command name and the second word as the optional argument:
+
+```go
+commandName := words[0]
+location := ""
+if len(words) > 1 {
+    location = words[1]
+}
+
+command.callback(cfg, location)
+```
+
+Commands that do not need an argument simply ignore it:
+
+```go
+func commandMap(cfg *config, location string) error {
+    // location is unused for this command
+}
+```
+
+This is a small amount of unused parameter noise, but it keeps command dispatch simple and consistent. Avoid branching in the REPL based on command names unless the dispatch rules truly differ.
 
 ## Pagination state belongs at the command/REPL layer
 
@@ -331,7 +365,7 @@ The cache package stores raw response bytes by URL:
 URL string -> []byte response body
 ```
 
-It does not know anything about Pokemon, locations, JSON structs, or the CLI. That keeps `internal/pokecache` reusable. The PokeAPI package decides what the bytes mean by unmarshalling them into `LocationData`.
+It does not know anything about Pokemon, locations, JSON structs, or the CLI. That keeps `internal/pokecache` reusable. The PokeAPI package decides what the bytes mean by unmarshalling them into endpoint-specific response structs.
 
 ```go
 type cacheEntry struct {
@@ -460,14 +494,80 @@ cfg := &config{
 Commands pass `cfg.Cache` into the PokeAPI request layer. The request layer checks the cache before making an HTTP request:
 
 ```text
-getLocations(url, cache)
+getPokeData(url, cache)
   -> cache.Get(url)
      -> if hit: use cached bytes
      -> if miss: http.Get(url), read body, cache.Add(url, bytes)
-  -> json.Unmarshal(bytes, &locations)
 ```
 
-Cached bytes and fresh HTTP bytes both go through the same JSON decoding path.
+Cached bytes and fresh HTTP bytes both go through the same return path. Callers decide how to decode the response.
+
+## Separating fetch/cache from response decoding
+
+Different PokeAPI endpoints can share the same transport behavior while returning different JSON shapes. Keep the common behavior in one helper:
+
+```go
+func getPokeData(url string, cache *pokecache.Cache) ([]byte, error) {
+    data, ok := cache.Get(url)
+    if ok {
+        return data, nil
+    }
+
+    res, err := http.Get(url)
+    if err != nil {
+        return nil, fmt.Errorf("getting PokeAPI data: %w", err)
+    }
+    defer res.Body.Close()
+
+    if res.StatusCode < 200 || res.StatusCode > 299 {
+        return nil, fmt.Errorf("unexpected status code: %d", res.StatusCode)
+    }
+
+    data, err = io.ReadAll(res.Body)
+    if err != nil {
+        return nil, fmt.Errorf("reading response body: %w", err)
+    }
+
+    cache.Add(url, data)
+    return data, nil
+}
+```
+
+Then each public API function owns the schema it returns:
+
+```go
+func WalkMap(url string, cache *pokecache.Cache) (LocationData, error) {
+    data, err := getPokeData(url, cache)
+    if err != nil {
+        return LocationData{}, err
+    }
+
+    var locations LocationData
+    if err := json.Unmarshal(data, &locations); err != nil {
+        return LocationData{}, fmt.Errorf("decoding location data: %w", err)
+    }
+    return locations, nil
+}
+
+func ExploreLocation(url string, cache *pokecache.Cache) (LocationDetails, error) {
+    data, err := getPokeData(url, cache)
+    if err != nil {
+        return LocationDetails{}, err
+    }
+
+    var details LocationDetails
+    if err := json.Unmarshal(data, &details); err != nil {
+        return LocationDetails{}, fmt.Errorf("decoding location details: %w", err)
+    }
+    return details, nil
+}
+```
+
+The boundary is:
+- `getPokeData`: URL in, bytes out, with caching.
+- `WalkMap` / `ExploreLocation`: bytes in, typed Go structs out.
+
+That avoids duplicating HTTP/cache logic while still keeping each response type explicit.
 
 ## Testing cache behavior with fake data
 
@@ -495,9 +595,9 @@ _, ok := cache.Get("https://example.com")
 
 This keeps the test fast while proving old entries are removed.
 
-## `ABOUTME:` file headers (personal convention)
+## `ABOUTME:` file headers
 
-From global CLAUDE.md: every new source file starts with a 2-line comment block, both lines prefixed `ABOUTME:`, so a `grep "ABOUTME:"` across a project gives you a file-by-file map. Not a Go idiom — a Nate idiom.
+From global CLAUDE.md: agent-generated source files can start with a 2-line comment block, both lines prefixed `ABOUTME:`, so a `grep "ABOUTME:"` across a project gives you a file-by-file map. Not a Go idiom, and not required for hand-written project files.
 
 ---
 
