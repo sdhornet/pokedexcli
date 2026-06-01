@@ -72,6 +72,24 @@ type LocationDetails struct {
 	} `json:"pokemon_encounters"`
 }
 
+type Pokemon struct {
+	Name           string `json:"name"`
+	Height         int    `json:"height"`
+	Weight         int    `json:"weight"`
+	BaseExperience int    `json:"base_experience"`
+	Stats          []struct {
+		BaseStat int `json:"base_stat"`
+		Stat     struct {
+			Name string `json:"name"`
+		} `json:"stat"`
+	} `json:"stats"`
+	Types []struct {
+		Type struct {
+			Name string `json:"name"`
+		} `json:"type"`
+	} `json:"types"`
+}
+
 func WalkMap(url string, cache *pokecache.Cache) (LocationData, error) {
 	var locations LocationData
 
@@ -100,6 +118,21 @@ func ExploreLocation(url string, cache *pokecache.Cache) (LocationDetails, error
 	}
 
 	return locationDetail, nil
+}
+
+func GatherPokemonDetails(url string, cache *pokecache.Cache) (Pokemon, error) {
+	var pokemonDetails Pokemon
+
+	dataBytes, err := getPokeData(url, cache)
+	if err != nil {
+		return Pokemon{}, err
+	}
+
+	if err := json.Unmarshal(dataBytes, &pokemonDetails); err != nil {
+		return Pokemon{}, fmt.Errorf("decoding pokemon details: %w", err)
+	}
+
+	return pokemonDetails, nil
 }
 
 func getPokeData(url string, cache *pokecache.Cache) ([]byte, error) {

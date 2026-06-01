@@ -6,11 +6,11 @@ import (
 	"github.com/sdhornet/pokedexcli/internal/pokeapi"
 )
 
-func explore(cfg *config, location string) error {
+func commandExplore(cfg *config, location string) error {
 	baseURL := "https://pokeapi.co/api/v2/location-area/"
 
 	if location == "" {
-		return fmt.Errorf("No location provided to explore")
+		return fmt.Errorf("no location provided to explore")
 	}
 	details, err := pokeapi.ExploreLocation(baseURL+location, cfg.Cache)
 	if err != nil {
