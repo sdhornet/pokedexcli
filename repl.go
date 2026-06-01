@@ -26,8 +26,8 @@ type config struct {
 
 func startRepl() {
 	cfg := &config{
-		Next:  "https://pokeapi.co/api/v2/location-area/",
-		Cache: pokecache.NewCache(5 * time.Second),
+		Next:    "https://pokeapi.co/api/v2/location-area/",
+		Cache:   pokecache.NewCache(5 * time.Second),
 		Pokedex: make(map[string]pokeapi.Pokemon),
 	}
 
@@ -101,6 +101,11 @@ func getCommands() map[string]cliCommand {
 			name:        "catch <pokemon_name>",
 			description: "Try to catch a pokemon",
 			callback:    commandCatch,
+		},
+		"inspect": {
+			name:        "inspect <pokemon_name>",
+			description: "Inspect the stats of a caught pokemon",
+			callback:    commandInspect,
 		},
 	}
 }
